@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Dash Evolution</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Orbitron', sans-serif;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+            width: 100%;
+            height: 100%;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .glitch-effect {
+            text-shadow: 2px 0 #ff00ff, -2px 0 #00ffff;
+            animation: glitch 0.5s infinite;
+        }
+
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 1.5s ease-out forwards;
+        }
+    </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+
+    <!-- Game Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI Overlay: Menu -->
+    <div id="menuScreen" class="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md z-10 cursor-pointer">
+        <h1 class="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-600 mb-8 tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+            EVOLUTION
+        </h1>
+        <p class="text-white mb-10 text-xl animate-pulse font-mono tracking-widest">TAP TO BEGIN</p>
+    </div>
+
+    <!-- UI Overlay: Game Over -->
+    <div id="gameOverScreen" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-red-900/60 backdrop-blur-md z-10">
+        <h2 class="text-6xl font-black text-white mb-8 tracking-widest glitch-effect">FAILED</h2>
+        <button id="retryBtn" class="px-10 py-4 bg-white text-black font-black text-xl hover:scale-105 transition-transform skew-x-[-10deg] cursor-pointer shadow-lg">
+            RETRY
+        </button>
+        <p class="mt-4 text-white/70 text-sm font-mono">PRESS SPACE TO RETRY</p>
+    </div>
+
+    <!-- UI Overlay: Won -->
+    <div id="wonScreen" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-black z-50 animate-fade-in">
+        <div class="relative p-12 border border-purple-500/50 rounded-2xl bg-black/90 backdrop-blur-2xl text-center shadow-[0_0_100px_rgba(139,92,246,0.3)]">
+            <div class="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-purple-500 -mt-1 -ml-1"></div>
+            <div class="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-purple-500 -mt-1 -mr-1"></div>
+            <div class="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-purple-500 -mb-1 -ml-1"></div>
+            <div class="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-purple-500 -mb-1 -mr-1"></div>
+
+            <h1 class="text-gray-400 text-lg uppercase tracking-[0.3em] mb-4">Sequence Complete</h1>
+            <div class="h-px w-20 bg-gradient-to-r from-transparent via-purple-500 to-transparent mx-auto mb-8"></div>
+            
+            <h2 class="text-xl font-bold text-white mb-2 font-mono">Designed and Created By</h2>
+            <h3 class="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 animate-pulse drop-shadow-[0_0_10px_rgba(216,180,254,0.5)]">
+                ShadyLies
+            </h3>
+            
+            <div class="mt-12">
+                <button id="restartBtn" class="px-8 py-3 bg-purple-600/20 border border-purple-500 text-purple-300 hover:bg-purple-600 hover:text-white transition-all duration-300 font-bold tracking-widest uppercase text-sm cursor-pointer">
+                    Re-Initialize
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONSTANTS ---
+        const GRAVITY = 0.6;
+        const FLAPPY_JUMP = -8;
+        const GEO_JUMP = -13.5;
+        const SPEED_FLAPPY = 6;
+        const SPEED_GEO = 6.0;
+        const FLAPPY_PIPE_LIMIT = 5;
+        const GROUND_Y_OFFSET = 100;
+        const GEO_DURATION_FRAMES = 300; // 5 seconds
+
+        const GameState = {
+            MENU: 'MENU',
+            PLAYING: 'PLAYING',
+            GAME_OVER: 'GAME_OVER',
+            WON: 'WON'
+        };
+
+        const GamePhase = {
+            FLAPPY: 'FLAPPY',
+            FLAPPY_END_SUCK: 'FLAPPY_END_SUCK',
+            LEVEL_DROP_IN: 'LEVEL_DROP_IN',
+            CUTSCENE_STRUGGLE: 'CUTSCENE_STRUGGLE',
+            GEOMETRY: 'GEOMETRY',
+            GEO_END_SUCK: 'GEO_END_SUCK'
+        };
+
+        // --- GLOBAL STATE ---
+        let canvas, ctx;
+        let currentGameState = GameState.MENU;
+        let animationFrameId;
+
+        const state = {
+            phase: GamePhase.FLAPPY,
+            player: { x: 100, y: 300, w: 30, h: 30, dy: 0, angle: 0, grounded: false, rotationSpeed: 0, alpha: 1 },
+            entities: [],
+            particles: [],
+            pipesSpawned: 0,
+            flappyVortexSpawned: false,
+            geoFrameCount: 0,
+            geoBlackHoleSpawned: false,
+            frames: 0,
+            groundY: 0,
+            gameSpeed: SPEED_FLAPPY,
+            bgOffset: 0,
+            inPortal: false,
+            theme: 'dark',
+            nextSpawnFrame: 0,
+            activePlatform: null,
+            cutsceneTimer: 0,
+            blackHoleScale: 0,
+            suckTarget: { x: 0, y: 0 },
+            stars: [],
+            levelDropY: 0,
+            creditTextX: 0
+        };
+
+        // --- UTILS ---
+        function generateStars(width, height, count = 150) {
+            const stars = [];
+            for(let i=0; i<count; i++) {
+                stars.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    size: Math.random() * 2 + 0.5,
+                    speed: Math.random() * 3 + 0.5
+                });
+            }
+            return stars;
+        }
+
+        // --- GAME LOGIC ---
+
+        function init() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // UI Event Listeners
+            document.getElementById('menuScreen').addEventListener('click', startGame);
+            document.getElementById('menuScreen').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                startGame();
+            }, { passive: false });
+            
+            document.getElementById('retryBtn').addEventListener('click', resetGame);
+            document.getElementById('retryBtn').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                resetGame();
+            }, { passive: false });
+
+            document.getElementById('restartBtn').addEventListener('click', resetGame);
+            document.getElementById('restartBtn').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                resetGame();
+            }, { passive: false });
+            
+            // Global Input
+            window.addEventListener('resize', handleResize);
+            window.addEventListener('keydown', handleKeyDown);
+            canvas.addEventListener('mousedown', handleInput);
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // Prevent scrolling
+                handleInput();
+            }, { passive: false });
+
+            // Initial Setup
+            handleResize();
+            resetGame();
+            
+            // Force MENU state visually
+            currentGameState = GameState.MENU;
+            updateUI();
+            
+            // Start Loop
+            loop();
+        }
+
+        function handleResize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (state.phase === GamePhase.GEOMETRY) {
+                state.groundY = window.innerHeight - GROUND_Y_OFFSET;
+            } else {
+                state.groundY = window.innerHeight + 100;
+            }
+            // Regenerate stars on resize
+            state.stars = generateStars(canvas.width, canvas.height);
+        }
+
+        function updateUI() {
+            const menu = document.getElementById('menuScreen');
+            const gameOver = document.getElementById('gameOverScreen');
+            const won = document.getElementById('wonScreen');
+
+            menu.classList.add('hidden');
+            gameOver.classList.add('hidden');
+            won.classList.add('hidden');
+
+            if (currentGameState === GameState.MENU) menu.classList.remove('hidden');
+            if (currentGameState === GameState.GAME_OVER) gameOver.classList.remove('hidden');
+            if (currentGameState === GameState.WON) won.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            state.phase = GamePhase.FLAPPY;
+            state.player = { x: 100, y: canvas.height / 2, w: 30, h: 30, dy: 0, angle: 0, grounded: false, rotationSpeed: 0, alpha: 1 };
+            state.entities = [];
+            state.particles = [];
+            state.pipesSpawned = 0;
+            state.flappyVortexSpawned = false;
+            state.geoFrameCount = 0;
+            state.geoBlackHoleSpawned = false;
+            state.frames = 0;
+            state.groundY = canvas.height + 100;
+            state.gameSpeed = SPEED_FLAPPY;
+            state.bgOffset = 0;
+            state.inPortal = false;
+            state.theme = 'dark';
+            state.nextSpawnFrame = 0;
+            state.activePlatform = null;
+            state.cutsceneTimer = 0;
+            state.blackHoleScale = 0;
+            state.suckTarget = { x: 0, y: 0 };
+            state.levelDropY = -canvas.height;
+            state.creditTextX = canvas.width + 500;
+            state.stars = generateStars(canvas.width, canvas.height);
+
+            currentGameState = GameState.PLAYING;
+            updateUI();
+        }
+        
+        function startGame() {
+            if (currentGameState === GameState.MENU) {
+                resetGame();
+            }
+        }
+
+        function handleInput() {
+            if (currentGameState === GameState.MENU) {
+                startGame();
+                return;
+            }
+            
+            // Disable input during cutscenes
+            if (state.phase !== GamePhase.FLAPPY && state.phase !== GamePhase.GEOMETRY) return;
+
+            if (currentGameState !== GameState.PLAYING) return;
+            
+            const { player, phase, groundY, inPortal, activePlatform } = state;
+            
+            if (inPortal) return;
+
+            if (phase === GamePhase.FLAPPY) {
+                player.dy = FLAPPY_JUMP;
+                player.angle = -25;
+            } else if (phase === GamePhase.GEOMETRY) {
+                const onGround = player.grounded || player.y >= groundY - player.h - 5;
+                const onPlatform = activePlatform !== null;
+
+                if (onGround || onPlatform) {
+                    player.dy = GEO_JUMP;
+                    player.grounded = false;
+                    player.rotationSpeed = 6;
+                    state.activePlatform = null;
+                }
+            }
+        }
+
+        function handleKeyDown(e) {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                if (currentGameState === GameState.GAME_OVER) {
+                    resetGame();
+                } else if (currentGameState === GameState.MENU) {
+                    startGame();
+                } else {
+                    handleInput();
+                }
+            }
+        }
+
+        function spawnParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                state.particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    life: 1.0,
+                    color
+                });
+            }
+        }
+
+        // --- LOOP ---
+
+        function loop() {
+            // Clear & Draw BG
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawBackground();
+
+            if (currentGameState === GameState.PLAYING || currentGameState === GameState.WON) {
+                updatePhysics();
+                updateCutscenes();
+            }
+
+            drawGame();
+
+            animationFrameId = requestAnimationFrame(loop);
+        }
+
+        // --- UPDATE ---
+
+        function updateCutscenes() {
+            // 1. Trigger Level Drop - Flappy Death
+            if (state.phase === GamePhase.FLAPPY_END_SUCK) {
+                const cx = state.suckTarget.x;
+                const cy = state.suckTarget.y;
+                
+                state.player.x += (cx - state.player.x) * 0.15;
+                state.player.y += (cy - state.player.y) * 0.15;
+                state.player.w *= 0.9;
+                state.player.h *= 0.9;
+                state.player.angle += 40;
+                state.player.alpha = (state.player.w / 30);
+
+                if (state.player.w < 2) {
+                    state.phase = GamePhase.LEVEL_DROP_IN;
+                    state.entities = []; 
+                    state.theme = 'neon';
+                    state.levelDropY = -canvas.height; 
+                    state.groundY = canvas.height - GROUND_Y_OFFSET;
+                }
+            }
+
+            // 1b. Geometry End Suck
+            if (state.phase === GamePhase.GEO_END_SUCK) {
+                const cx = state.suckTarget.x;
+                const cy = state.suckTarget.y;
+                
+                state.player.x += (cx - state.player.x) * 0.10;
+                state.player.y += (cy - state.player.y) * 0.10;
+                state.player.w *= 0.94;
+                state.player.h *= 0.94;
+                state.player.angle += 30;
+                
+                if (state.player.w < 2) {
+                    currentGameState = GameState.WON;
+                    updateUI();
+                }
+            }
+
+            // 2. Level Drop In (Mario Style Slide)
+            if (state.phase === GamePhase.LEVEL_DROP_IN) {
+                const targetY = 0;
+                const dy = (targetY - state.levelDropY) * 0.08;
+                state.levelDropY += dy;
+                
+                if (Math.abs(targetY - state.levelDropY) < 1) {
+                    state.levelDropY = targetY;
+                    state.phase = GamePhase.CUTSCENE_STRUGGLE;
+                    state.cutsceneTimer = 0;
+                }
+            }
+
+            // 3. The "Struggle" Cutscene
+            if (state.phase === GamePhase.CUTSCENE_STRUGGLE) {
+                state.cutsceneTimer++;
+                const t = state.cutsceneTimer;
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+
+                if (t < 60) {
+                    state.blackHoleScale = t / 60;
+                } else if (t < 250) {
+                    state.blackHoleScale = 1 + Math.sin(t * 0.1) * 0.05;
+                } else if (t < 300) {
+                    // shrink
+                } else if (t < 330) {
+                    // explode
+                } else if (t < 360) {
+                    state.blackHoleScale *= 0.8;
+                } else {
+                    state.phase = GamePhase.GEOMETRY;
+                    state.player.x = cx;
+                    state.player.y = cy;
+                    state.player.w = 30;
+                    state.player.h = 30;
+                    state.player.alpha = 1;
+                    state.player.angle = 0;
+                    state.gameSpeed = SPEED_GEO;
+                    state.nextSpawnFrame = state.frames + 60;
+                    state.geoFrameCount = 0;
+                    state.geoBlackHoleSpawned = false;
+                    state.entities = []; 
+                    state.creditTextX = canvas.width + 100;
+                    spawnParticles(cx, cy, '#00ffcc', 100);
+                }
+            }
+
+            // 4. Text Animation
+            if (state.phase === GamePhase.GEOMETRY) {
+                const targetX = canvas.width / 2;
+                state.creditTextX += (targetX - state.creditTextX) * 0.04;
+            }
+        }
+
+        function updatePhysics() {
+            const { player } = state;
+
+            // Skip standard physics during cutscenes
+            if (state.phase !== GamePhase.FLAPPY && state.phase !== GamePhase.GEOMETRY) return;
+            if (state.inPortal) return; 
+
+            state.frames++;
+
+            // Gravity
+            player.dy += GRAVITY;
+            player.y += player.dy;
+
+            // Geometry Rotation
+            if (state.phase === GamePhase.GEOMETRY) {
+                state.geoFrameCount++; 
+
+                if (!player.grounded && !state.activePlatform) {
+                    player.angle += 6; 
+                } else {
+                    const mod = player.angle % 90;
+                    if (mod !== 0) {
+                        if (mod > 45) player.angle += (90 - mod) * 0.5;
+                        else player.angle -= mod * 0.5;
+                    }
+                }
+            }
+
+            // Floor Collision
+            if (state.phase === GamePhase.GEOMETRY) {
+                if (player.y + player.h >= state.groundY) {
+                    player.y = state.groundY - player.h;
+                    player.dy = 0;
+                    player.grounded = true;
+                    state.activePlatform = null;
+                } 
+            } else if (state.phase === GamePhase.FLAPPY) {
+                if (player.y + player.h > canvas.height || player.y < 0) {
+                    currentGameState = GameState.GAME_OVER;
+                    updateUI();
+                    spawnParticles(player.x, player.y, '#FF0000', 20);
+                }
+                player.angle += 1; 
+            }
+
+            // Spawning
+            spawnEntities();
+
+            // Entity Logic
+            let onPlatformThisFrame = false;
+
+            for (let i = state.entities.length - 1; i >= 0; i--) {
+                const ent = state.entities[i];
+                ent.x -= state.gameSpeed;
+
+                if (ent.x + ent.width < -200) {
+                    state.entities.splice(i, 1);
+                    continue;
+                }
+
+                // Check Vortex
+                if (ent.type === 'FLAPPY_VORTEX' || ent.type === 'GEO_VORTEX') {
+                    const cx = ent.x + ent.width/2;
+                    const cy = ent.y + ent.height/2;
+                    const dist = Math.sqrt(Math.pow(player.x + player.w/2 - cx, 2) + Math.pow(player.y + player.h/2 - cy, 2));
+                    
+                    if (dist < 60) {
+                        if (ent.type === 'FLAPPY_VORTEX') {
+                            state.phase = GamePhase.FLAPPY_END_SUCK;
+                        } else {
+                            state.phase = GamePhase.GEO_END_SUCK;
+                        }
+                        state.suckTarget = { x: cx, y: cy };
+                    }
+                }
+
+                // Collision
+                const padding = 8;
+                const isColliding = 
+                    player.x + padding < ent.x + ent.width - padding && 
+                    player.x + player.w - padding > ent.x + padding &&
+                    player.y + padding < ent.y + ent.height - padding &&
+                    player.y + player.h - padding > ent.y + padding;
+
+                if (ent.type === 'BLOCK') {
+                    const footY = player.y + player.h;
+                    const prevFootY = footY - player.dy;
+                    const withinX = player.x + player.w > ent.x + 5 && player.x < ent.x + ent.width - 5;
+                    
+                    if (withinX && player.dy >= 0 && prevFootY <= ent.y + 20 && footY >= ent.y) {
+                        player.y = ent.y - player.h;
+                        player.dy = 0;
+                        player.grounded = true;
+                        state.activePlatform = ent;
+                        onPlatformThisFrame = true;
+                    } else if (isColliding) {
+                        currentGameState = GameState.GAME_OVER;
+                        updateUI();
+                        spawnParticles(player.x, player.y, '#ff0055', 40);
+                    }
+                }
+                else if (isColliding) {
+                    if (ent.type === 'FLAPPY_VORTEX' || ent.type === 'GEO_VORTEX') {
+                        // handled via distance
+                    } else if (ent.type !== 'PORTAL') {
+                        currentGameState = GameState.GAME_OVER;
+                        updateUI();
+                        spawnParticles(player.x, player.y, '#ff0055', 40);
+                    }
+                }
+
+                if (!ent.passed && player.x > ent.x + ent.width) {
+                    ent.passed = true;
+                }
+            }
+
+            if (state.activePlatform) {
+                if (!onPlatformThisFrame) {
+                    const ent = state.activePlatform;
+                    const withinX = player.x + player.w > ent.x && player.x < ent.x + ent.width;
+                    if (!withinX) {
+                        state.activePlatform = null;
+                        player.grounded = false;
+                    }
+                }
+            } else if (state.phase === GamePhase.GEOMETRY && player.y + player.h < state.groundY) {
+                player.grounded = false;
+            }
+        }
+
+        function spawnEntities() {
+            if (state.phase === GamePhase.FLAPPY) {
+                if (state.flappyVortexSpawned) return;
+
+                if (state.frames % 120 === 0) {
+                    if (state.pipesSpawned < FLAPPY_PIPE_LIMIT) {
+                        const gap = 170;
+                        const minHeight = 60;
+                        const maxPipeHeight = canvas.height - gap - minHeight;
+                        const height = Math.floor(Math.random() * (maxPipeHeight - minHeight + 1) + minHeight);
+                        
+                        if (state.pipesSpawned === FLAPPY_PIPE_LIMIT - 1) {
+                            const vortexSize = 120;
+                            const gapCenterY = height + gap/2;
+                            
+                            state.entities.push({ x: canvas.width, y: 0, width: 60, height: height, type: 'PIPE_DOWN' });
+                            state.entities.push({ x: canvas.width, y: height + gap, width: 60, height: canvas.height - (height + gap), type: 'PIPE_UP' });
+                            
+                            state.entities.push({
+                                x: canvas.width - 30,
+                                y: gapCenterY - vortexSize/2,
+                                width: vortexSize,
+                                height: vortexSize,
+                                type: 'FLAPPY_VORTEX'
+                            });
+                            
+                            state.flappyVortexSpawned = true;
+                        } else {
+                            state.entities.push({ x: canvas.width, y: 0, width: 60, height: height, type: 'PIPE_DOWN' });
+                            state.entities.push({ x: canvas.width, y: height + gap, width: 60, height: canvas.height - (height + gap), type: 'PIPE_UP' });
+                        }
+                        
+                        state.pipesSpawned++;
+                    } 
+                }
+            } else if (state.phase === GamePhase.GEOMETRY) {
+                if (state.geoFrameCount >= GEO_DURATION_FRAMES) {
+                    if (!state.geoBlackHoleSpawned) {
+                        const lastEnt = state.entities[state.entities.length - 1];
+                        const spawnX = lastEnt ? Math.max(canvas.width, lastEnt.x + lastEnt.width + 400) : canvas.width;
+                        
+                        state.entities.push({
+                            x: spawnX,
+                            y: state.groundY - 200, 
+                            width: 150,
+                            height: 150,
+                            type: 'GEO_VORTEX'
+                        });
+                        state.geoBlackHoleSpawned = true;
+                    }
+                    return;
+                }
+            }
+        }
+
+        // --- DRAWING ---
+
+        function drawBackground() {
+            ctx.fillStyle = '#fff';
+            state.stars.forEach(star => {
+                let speedMult = 1;
+                if (state.phase === GamePhase.GEOMETRY || state.phase === GamePhase.GEO_END_SUCK) speedMult = 2.5; 
+                else speedMult = 0.5;
+
+                star.x -= star.speed * speedMult;
+                if (star.x < 0) {
+                    star.x = canvas.width;
+                    star.y = Math.random() * canvas.height;
+                }
+
+                ctx.globalAlpha = Math.random() * 0.5 + 0.3;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+
+            if (state.phase === GamePhase.FLAPPY) {
+                state.bgOffset -= 1;
+                const gridSize = 60;
+                if (state.bgOffset <= -gridSize) state.bgOffset = 0;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.beginPath();
+                for(let x = state.bgOffset; x < canvas.width; x += gridSize) {
+                    ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+                }
+                ctx.stroke();
+            }
+        }
+
+        function drawGame() {
+            // Level Drop In
+            let yOffset = 0;
+            if (state.phase === GamePhase.LEVEL_DROP_IN) {
+                yOffset = state.levelDropY;
+                ctx.save();
+                ctx.translate(0, yOffset);
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, state.groundY, canvas.width, canvas.height);
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#00ffcc';
+                ctx.strokeStyle = '#00ffcc';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(0, state.groundY);
+                ctx.lineTo(canvas.width, state.groundY);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+                return;
+            }
+
+            // Cutscene
+            if (state.phase === GamePhase.CUTSCENE_STRUGGLE) {
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+                const t = state.cutsceneTimer;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                const scale = state.blackHoleScale;
+                
+                const ringGrad = ctx.createRadialGradient(0,0, 60 * scale, 0,0, 160 * scale);
+                ringGrad.addColorStop(0.3, 'rgba(0,0,0,0)');
+                ringGrad.addColorStop(0.4, 'rgba(255, 160, 50, 0.8)'); 
+                ringGrad.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
+                ringGrad.addColorStop(0.6, 'rgba(100, 200, 255, 0.6)');
+                ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                
+                ctx.fillStyle = ringGrad;
+                ctx.beginPath();
+                ctx.scale(1, 0.4); 
+                ctx.arc(0,0, 160 * scale, 0, Math.PI*2);
+                ctx.fill();
+                ctx.scale(1, 2.5); 
+
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(0,0, 60 * scale, 0, Math.PI*2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2 * scale;
+                ctx.beginPath();
+                ctx.arc(0,0, 62 * scale, 0, Math.PI*2);
+                ctx.stroke();
+                ctx.restore();
+
+                // Struggle
+                if (t > 60 && t < 250) {
+                    const shakeX = (Math.random() - 0.5) * 6;
+                    const shakeY = (Math.random() - 0.5) * 6;
+                    ctx.save();
+                    ctx.translate(cx + shakeX, cy + shakeY);
+                    
+                    ctx.strokeStyle = '#fbbf24';
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(-10, 0); 
+                    ctx.quadraticCurveTo(-40, -20, -60, -10);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(10, 0); 
+                    ctx.quadraticCurveTo(40, -20, 60, -10);
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.beginPath();
+                    ctx.arc(-60, -10, 8, 0, Math.PI*2);
+                    ctx.arc(60, -10, 8, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(0, -10, 25, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(-10, -15, 8, 0, Math.PI*2);
+                    ctx.arc(10, -15, 8, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(-10, -15, 3, 0, Math.PI*2);
+                    ctx.arc(10, -15, 3, 0, Math.PI*2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#f97316';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 10, 6, 0, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Sucked in
+                if (t >= 250 && t < 280) {
+                    const progress = (t - 250) / 30;
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    ctx.rotate(t * 0.8);
+                    ctx.scale(1 - progress, 1 - progress);
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 15, 40, 0, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Cube shoots
+                if (t > 300) {
+                    const progress = (t - 300) / 30;
+                    if (progress < 1) {
+                        const size = 30 * progress;
+                        ctx.save();
+                        ctx.translate(cx, cy);
+                        ctx.rotate(progress * Math.PI * 4);
+                        ctx.shadowColor = '#00ffcc';
+                        ctx.shadowBlur = 20;
+                        ctx.fillStyle = '#000';
+                        ctx.strokeStyle = '#00ffcc';
+                        ctx.lineWidth = 2;
+                        ctx.fillRect(-size/2, -size/2, size, size);
+                        ctx.strokeRect(-size/2, -size/2, size, size);
+                        ctx.restore();
+                    }
+                }
+                return;
+            }
+
+            // Normal Draw
+            if (state.phase === GamePhase.GEOMETRY || state.phase === GamePhase.GEO_END_SUCK) {
+                if (state.phase === GamePhase.GEOMETRY) {
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const gradient = ctx.createLinearGradient(state.creditTextX - 200, 0, state.creditTextX + 200, 0);
+                    gradient.addColorStop(0, '#22d3ee');
+                    gradient.addColorStop(0.5, '#e879f9');
+                    gradient.addColorStop(1, '#f472b6');
+                    
+                    ctx.fillStyle = gradient;
+                    ctx.font = '900 italic 40px "Orbitron", sans-serif';
+                    ctx.shadowColor = 'rgba(232, 121, 249, 0.5)';
+                    ctx.shadowBlur = 15;
+                    ctx.fillText("ShadyLies, Naam To Suna Hi Hoga", state.creditTextX, canvas.height / 2 - 100);
+                    ctx.restore();
+                }
+
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, state.groundY, canvas.width, canvas.height);
+                
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#00ffcc';
+                ctx.strokeStyle = '#00ffcc';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(0, state.groundY);
+                ctx.lineTo(canvas.width, state.groundY);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            // Entities
+            state.entities.forEach(ent => {
+                if (ent.type.includes('PIPE')) {
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fillRect(ent.x, ent.y, ent.width, ent.height);
+                    ctx.fillStyle = '#4ade80'; 
+                    if (ent.type === 'PIPE_DOWN') ctx.fillRect(ent.x - 4, ent.y + ent.height - 24, ent.width + 8, 24);
+                    else ctx.fillRect(ent.x - 4, ent.y, ent.width + 8, 24);
+                } else if (ent.type === 'PORTAL' || ent.type === 'FLAPPY_VORTEX' || ent.type === 'GEO_VORTEX') {
+                    ctx.save();
+                    ctx.translate(ent.x + ent.width/2, ent.y + ent.height/2);
+                    ctx.rotate(state.frames * -0.1); 
+                    
+                    const isVortex = ent.type === 'FLAPPY_VORTEX' || ent.type === 'GEO_VORTEX';
+
+                    const grad = ctx.createRadialGradient(0,0, 20, 0,0, 70);
+                    grad.addColorStop(0, '#000');
+                    grad.addColorStop(0.5, isVortex ? '#7c3aed' : '#4c1d95'); 
+                    grad.addColorStop(1, 'transparent');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(0,0, isVortex ? 100 : 80, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(0,0, isVortex ? 60 : 40, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    ctx.strokeStyle = isVortex ? '#fcd34d' : '#e879f9';
+                    ctx.lineWidth = 2;
+                    for(let i=0; i<4; i++) {
+                        ctx.rotate(Math.PI/2);
+                        ctx.beginPath();
+                        ctx.arc(0, isVortex ? 30 : 20, isVortex ? 40 : 30, 0, Math.PI);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            });
+
+            // Player
+            if (state.phase !== GamePhase.FLAPPY_END_SUCK) { 
+                ctx.save();
+                ctx.translate(state.player.x + state.player.w / 2, state.player.y + state.player.h / 2);
+                ctx.rotate((state.player.angle * Math.PI) / 180);
+                ctx.globalAlpha = state.player.alpha;
+                
+                if (state.phase === GamePhase.GEO_END_SUCK) {
+                    ctx.shadowColor = '#00ffcc';
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(-state.player.w/2, -state.player.h/2, state.player.w, state.player.h);
+                    ctx.strokeStyle = '#00ffcc';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-state.player.w/2, -state.player.h/2, state.player.w, state.player.h);
+                }
+                else if (state.phase === GamePhase.FLAPPY) {
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.fillRect(-state.player.w/2, -state.player.h/2, state.player.w, state.player.h);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(6, -10, 10, 10);
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(10, -8, 4, 4);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(-8, 2, 16, 10);
+                } else if (state.phase === GamePhase.GEOMETRY) {
+                    ctx.shadowColor = '#00ffcc';
+                    ctx.shadowBlur = 20;
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(-state.player.w/2, -state.player.h/2, state.player.w, state.player.h);
+                    ctx.strokeStyle = '#00ffcc'; 
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(-state.player.w/2, -state.player.h/2, state.player.w, state.player.h);
+                    ctx.fillStyle = '#d946ef'; 
+                    ctx.fillRect(4, -6, 8, 8);
+                    ctx.fillRect(4, 4, 8, 8); 
+                }
+                ctx.restore();
+                ctx.globalAlpha = 1;
+            }
+
+            // Particles
+            for (let i = state.particles.length - 1; i >= 0; i--) {
+                const p = state.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.03;
+                if (p.life <= 0) {
+                    state.particles.splice(i, 1);
+                    continue;
+                }
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 4, 4);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // --- INIT ---
+        window.onload = init;
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
